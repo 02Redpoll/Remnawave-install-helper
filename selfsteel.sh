@@ -15,7 +15,7 @@ echo "       SelfSteel Nginx Installer By redpoll"
 echo "========================================="
 echo
 
-read -r -p "Домен: " DOMAIN
+read -r -p "Домен: " DOMAIN </dev/tty
 
 if [[ -z "${DOMAIN}" ]]; then
     echo "[ERROR] Домен не указан."
@@ -36,7 +36,7 @@ if [[ "${EUID}" -ne 0 ]]; then
     exit 1
 fi
 
-read -r -p "Email для Certbot: " EMAIL
+read -r -p "Email для Certbot: " EMAIL </dev/tty
 
 if [[ -z "${EMAIL}" ]]; then
     echo "[ERROR] Email не указан."
@@ -50,7 +50,7 @@ echo "  2) OK        — обычная страница ok"
 echo
 
 while true; do
-    read -r -p "Введите 1 или 2: " TEMPLATE
+    read -r -p "Введите 1 или 2: " TEMPLATE </dev/tty
 
     case "${TEMPLATE}" in
         1|2)
