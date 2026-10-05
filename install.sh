@@ -101,10 +101,6 @@ services:
     volumes:
       - '/etc/letsencrypt:/etc/letsencrypt:ro'
       - /dev/shm:/dev/shm
-    sysctls:
-      net.core.somaxconn: 65535
-      net.ipv4.tcp_max_syn_backlog: 65535
-      net.ipv4.tcp_fastopen: 3
 EOF
 }
 
@@ -130,6 +126,9 @@ services:
     environment:
       - NODE_PORT=$node_port
       - SECRET_KEY="$secret"
+    volumes:
+      - '/etc/letsencrypt:/etc/letsencrypt:ro'
+      - /dev/shm:/dev/shm      
 EOF
 }
 
@@ -152,12 +151,12 @@ main() {
     echo
     echo "Какая у вас версия Remnawave Panel?"
     echo "  2) Panel 2.x.x  -> Node 2.8.0"
-    echo "  3) Panel 3.x.x  -> Node 3.4.1"
+    echo "  3) Panel 3.x.x  -> Node 3.x.x"
     echo
 
     local raw_major panel_major
     while true; do
-        read -r -p "Введите 2 или 3 (также можно 2.8.0 / 3.4.4): " raw_major
+        read -r -p "Введите 2 или 3 : " raw_major
         if panel_major="$(normalize_panel_major "$raw_major")"; then
             break
         fi
