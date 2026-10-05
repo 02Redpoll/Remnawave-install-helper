@@ -11,7 +11,7 @@ SITE_ENABLED="/etc/nginx/sites-enabled/${SITE_NAME}"
 WEB_ROOT="/var/www/html"
 
 echo "========================================="
-echo "       SelfSteel Nginx Installer By redpoll"
+echo "SelfSteel Nginx Installer By redpoll"
 echo "========================================="
 echo
 
