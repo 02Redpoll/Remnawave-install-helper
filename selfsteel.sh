@@ -142,7 +142,7 @@ cat > "${WEB_ROOT}/selfsteel-forbidden.html" <<EOF
 </html>
 EOF
 
-cat > "${WEB_ROOT}/selfsteel-ok.html" <<EOF
+cat > "${WEB_ROOT}/selfsteel-ok.html" <<'EOF'
 ok
 EOF
 
@@ -154,6 +154,16 @@ if [[ "${TEMPLATE}" == "1" ]]; then
     echo "[+] Выбран шаблон: Forbidden"
 
     cat > "${SITE_AVAILABLE}" <<EOF
+server {
+    listen 80;
+    listen [::]:80;
+
+    server_name ${DOMAIN};
+    server_tokens off;
+
+    return 301 https://${DOMAIN}\$request_uri;
+}
+
 server {
     listen 127.0.0.1:2443 ssl http2 proxy_protocol default_server;
     server_name ${DOMAIN};
@@ -170,6 +180,7 @@ server {
     ssl_session_cache shared:SSL:10m;
     ssl_session_timeout 1d;
 
+    add_header Strict-Transport-Security "max-age=31536000" always;
     add_header X-Content-Type-Options nosniff always;
     add_header X-Frame-Options SAMEORIGIN always;
 
@@ -191,6 +202,16 @@ else
 
     cat > "${SITE_AVAILABLE}" <<EOF
 server {
+    listen 80;
+    listen [::]:80;
+
+    server_name ${DOMAIN};
+    server_tokens off;
+
+    return 301 https://${DOMAIN}\$request_uri;
+}
+
+server {
     listen 127.0.0.1:2443 ssl http2 proxy_protocol default_server;
     server_name ${DOMAIN};
 
@@ -206,11 +227,12 @@ server {
     ssl_session_cache shared:SSL:10m;
     ssl_session_timeout 1d;
 
+    add_header Strict-Transport-Security "max-age=31536000" always;
     add_header X-Content-Type-Options nosniff always;
     add_header X-Frame-Options SAMEORIGIN always;
 
     location / {
-        try_files $uri /selfsteel-ok.html;
+        try_files \$uri /selfsteel-ok.html;
     }
 }
 EOF
@@ -246,6 +268,8 @@ echo
 echo "SSL:"
 echo "${CERT_DIR}"
 echo
-echo "Listen:"
-echo "127.0.0.1:2443"
+echo "HTTP: 80 (301 -> https://${DOMAIN})"
+echo "HTTPS backend: 127.0.0.1:2443"
+echo "TLS protocols: TLSv1.2, TLSv1.3"
+echo "HSTS: max-age=31536000"
 echo
