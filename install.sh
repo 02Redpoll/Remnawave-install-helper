@@ -271,7 +271,14 @@ main() {
     elif [[ $source_path == /usr/local/bin/redwave ]]; then
         chmod 755 /usr/local/bin/redwave
     else
-        warn "Скрипт запущен из потока и не может установить себя. Сохраните его в файл и запустите этот файл от root."
+        local script_url="https://raw.githubusercontent.com/02Redpoll/Remnawave-install-helper/main/install.sh"
+        if command -v curl >/dev/null 2>&1; then
+            curl -fsSL "$script_url" -o /usr/local/bin/redwave && chmod 755 /usr/local/bin/redwave && log "Команда redwave установлена в /usr/local/bin/redwave."
+        elif command -v wget >/dev/null 2>&1; then
+            wget -qO /usr/local/bin/redwave "$script_url" && chmod 755 /usr/local/bin/redwave && log "Команда redwave установлена в /usr/local/bin/redwave."
+        else
+            die "Для установки команды redwave нужен curl или wget."
+        fi
     fi
     command -v apt-get >/dev/null 2>&1 || die "Поддерживаются Debian/Ubuntu с apt-get."
     command -v python3 >/dev/null 2>&1 || { apt-get update -y; DEBIAN_FRONTEND=noninteractive apt-get install -y python3; }
