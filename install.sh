@@ -235,6 +235,10 @@ EOF
 
 enable_bbr() {
     local congestion available
+    if [[ $(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || true) == bbr ]]; then
+        log "BBR уже включён. Ничего не меняю."
+        return 0
+    fi
     if ! modprobe tcp_bbr 2>/dev/null; then
         warn "Не удалось загрузить tcp_bbr; проверяю, возможно модуль уже встроен в ядро."
     fi
@@ -259,23 +263,48 @@ EOF
 
 main() {
     require_root
+    local source_path
+    source_path=$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || true)
+    if [[ -n $source_path && -f $source_path && $source_path != /usr/local/bin/redwave ]]; then
+        install -m 755 "$source_path" /usr/local/bin/redwave
+        log "Команда redwave установлена в /usr/local/bin/redwave. Её можно запустить командой redwave."
+    elif [[ $source_path == /usr/local/bin/redwave ]]; then
+        chmod 755 /usr/local/bin/redwave
+    else
+        warn "Скрипт запущен из потока и не может установить себя. Сохраните его в файл и запустите этот файл от root."
+    fi
     command -v apt-get >/dev/null 2>&1 || die "Поддерживаются Debian/Ubuntu с apt-get."
     command -v python3 >/dev/null 2>&1 || { apt-get update -y; DEBIAN_FRONTEND=noninteractive apt-get install -y python3; }
-    echo "========================================="
-    echo "                 redwave"
-    echo "========================================="
-    echo "1) Установить Remnawave Node"
-    echo "2) Установить SelfSteel"
-    echo "3) Установить оба компонента"
-    echo "4) Включить BBR вместо cubic (сохранить после перезагрузки)"
-    local choice
-    while :; do read -r -p "Выберите пункт 1-4: " choice; [[ $choice == 1 || $choice == 2 || $choice == 3 || $choice == 4 ]] && break; warn "Выберите пункт 1-4."; done
-    case "$choice" in
-        1) install_node;;
-        2) install_selfsteel;;
-        3) install_node; install_selfsteel;;
-        4) enable_bbr;;
-    esac
+    local choice key
+    while :; do
+        echo
+        echo "========================================="
+        echo "                 redwave"
+        echo "========================================="
+        echo "1) Установить Remnawave Node"
+        echo "2) Установить SelfSteel"
+        echo "3) Установить оба компонента"
+        echo "4) Включить BBR вместо cubic (сохранить после перезагрузки)"
+        echo "0) Выход"
+        while :; do
+            read -r -p "Выберите пункт 0-4: " choice
+            [[ $choice == 0 || $choice == 1 || $choice == 2 || $choice == 3 || $choice == 4 ]] && break
+            warn "Выберите пункт 0-4."
+        done
+        [[ $choice == 0 ]] && break
+        case "$choice" in
+            1) install_node;;
+            2) install_selfsteel;;
+            3) install_node; install_selfsteel;;
+            4) enable_bbr;;
+        esac
+        echo
+        read -r -n 1 -s -p "Нажмите пробел, чтобы вернуться в меню . . ." key
+        echo
+        while [[ $key != ' ' ]]; do
+            read -r -n 1 -s key
+        done
+    done
 }
 
 main "$@"
