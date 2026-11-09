@@ -57,7 +57,36 @@ ask_port() {
 }
 
 configure_firewall() {
-    local v4_allow="" v6_allow=""
+    local firewall_choice v4_allow="" v6_allow=""
+    echo "Firewall для порта ноды:"
+    echo "1) iptables — whitelist IP панели"
+    echo "2) UFW — allow IP панели, deny для остальных"
+    while :; do
+        read -r -p "Выберите 1 или 2: " firewall_choice
+        [[ $firewall_choice == 1 || $firewall_choice == 2 ]] && break
+        warn "Введите 1 или 2."
+    done
+
+    if [[ $firewall_choice == 2 ]]; then
+        if ! command -v ufw >/dev/null 2>&1; then
+            apt-get update -y
+            DEBIAN_FRONTEND=noninteractive apt-get install -y ufw
+        fi
+        if ! ufw status | grep -q '^Status: active'; then
+            if [[ -n "${SSH_CONNECTION:-}" ]]; then
+                local ssh_port
+                ssh_port=$(awk '{print $4}' <<<"$SSH_CONNECTION")
+                if valid_port "$ssh_port"; then ufw allow "${ssh_port}/tcp" comment 'Preserve current SSH access'; fi
+            fi
+            ufw --force enable
+        fi
+        ufw insert 1 allow from "$PANEL_IP" to any port "$NODE_PORT" proto tcp comment 'Remnawave Panel only'
+        ufw insert 2 deny "$NODE_PORT/tcp" comment 'Block other Remnawave Node clients'
+        ufw reload
+        log "UFW ограничивает TCP/$NODE_PORT адресом $PANEL_IP."
+        return 0
+    fi
+
     if [[ $PANEL_IP == *:* ]]; then v6_allow="-s $PANEL_IP"; else v4_allow="-s $PANEL_IP"; fi
     command -v iptables >/dev/null 2>&1 || { apt-get update -y; DEBIAN_FRONTEND=noninteractive apt-get install -y iptables; }
     command -v ip6tables >/dev/null 2>&1 || { apt-get update -y; DEBIAN_FRONTEND=noninteractive apt-get install -y iptables; }
@@ -291,7 +320,7 @@ main() {
         echo "1) Установить Remnawave Node"
         echo "2) Установить SelfSteel"
         echo "3) Установить оба компонента"
-        echo "4) Включить BBR вместо cubic (сохранить после перезагрузки)"
+        echo "4) Включить BBR вместо cubic"
         echo "0) Выход"
         while :; do
             read -r -p "Выберите пункт 0-4: " choice
