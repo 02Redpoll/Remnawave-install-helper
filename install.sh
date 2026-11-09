@@ -181,6 +181,16 @@ install_selfsteel() {
 EOF
     printf 'ok\n' > "$WEB_ROOT/selfsteel-ok.html"
     chmod 644 "$WEB_ROOT/selfsteel-forbidden.html" "$WEB_ROOT/selfsteel-ok.html"
+    # Plain HTTP is redirected by the browser to the public HTTPS endpoint for this domain.
+    cat > "/etc/nginx/sites-available/${SITE_NAME}-http-redirect" <<EOF
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${domain};
+    return 301 https://${domain}\$request_uri;
+}
+EOF
+    ln -sfn "/etc/nginx/sites-available/${SITE_NAME}-http-redirect" "/etc/nginx/sites-enabled/${SITE_NAME}-http-redirect"
     if [[ $template == 1 ]]; then
         cat > "$site_available" <<EOF
 server {
