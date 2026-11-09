@@ -320,7 +320,7 @@ main() {
         echo "1) Установить Remnawave Node"
         echo "2) Установить SelfSteel"
         echo "3) Установить оба компонента"
-        echo "4) Включить BBR вместо cubic"
+        echo "4) Включить BBR"
         echo "0) Выход"
         while :; do
             read -r -p "Выберите пункт 0-4: " choice
