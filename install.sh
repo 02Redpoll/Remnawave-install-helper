@@ -200,10 +200,12 @@ EOF
 install_node() {
     local raw major answer
     ask_panel_ip
-    echo "Версия Remnawave Panel: 2) 2.x (Node 2.8.0)  3) 3.x (Node latest)"
+    echo "Версия Remnawave Panel:"
+    echo "1) Panel 2.x (Node 2.8.0)"
+    echo "2) Panel 3.x (Node latest)"
     while :; do
-        read -r -p "Введите 2 или 3: " raw
-        case "${raw,,}" in 2|2.*) major=2; break;; 3|3.*) major=3; break;; *) warn "Укажите версию 2.x или 3.x.";; esac
+        read -r -p "Введите 1 или 2: " raw
+        case "$raw" in 1) major=2; break;; 2) major=3; break;; *) warn "Введите 1 или 2.";; esac
     done
     NODE_VERSION=$NODE_V2_VERSION
     [[ $major == 3 ]] && NODE_VERSION=$NODE_V3_VERSION
