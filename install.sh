@@ -40,9 +40,10 @@ valid_port() { [[ $1 =~ ^[0-9]{1,5}$ ]] && (( 10#$1 >= 1 && 10#$1 <= 65535 )); }
 ask_panel_ip() {
     local ip
     while :; do
-        read -r -p "Публичный IP Remnawave Panel (обязательно): " ip
+        read -r -p "Публичный IP Remnawave Panel (Enter — без ограничения по IP): " ip
+        if [[ -z $ip ]]; then PANEL_IP=""; return; fi
         if valid_ip "$ip"; then PANEL_IP="$ip"; return; fi
-        warn "Укажите один корректный IPv4 или IPv6 адрес (без CIDR)."
+        warn "Укажите корректный IPv4/IPv6 или оставьте поле пустым."
     done
 }
 
@@ -56,11 +57,26 @@ ask_port() {
     done
 }
 
+remove_node_iptables_rules() {
+    systemctl disable --now remnanode-firewall.service >/dev/null 2>&1 || true
+    local fw
+    for fw in iptables ip6tables; do
+        command -v "$fw" >/dev/null 2>&1 || continue
+        while "$fw" -C INPUT -j REMNANODE_NODE 2>/dev/null; do
+            "$fw" -D INPUT -j REMNANODE_NODE
+        done
+        "$fw" -F REMNANODE_NODE 2>/dev/null || true
+        "$fw" -X REMNANODE_NODE 2>/dev/null || true
+    done
+    rm -f /etc/systemd/system/remnanode-firewall.service /usr/local/sbin/remnanode-firewall
+    systemctl daemon-reload
+}
+
 configure_firewall() {
-    local firewall_choice v4_allow="" v6_allow=""
+    local firewall_choice v4_rules="" v6_rules=""
     echo "Firewall для порта ноды:"
-    echo "1) iptables — whitelist IP панели"
-    echo "2) UFW — allow IP панели, deny для остальных"
+    echo "1) iptables"
+    echo "2) UFW"
     while :; do
         read -r -p "Выберите 1 или 2: " firewall_choice
         [[ $firewall_choice == 1 || $firewall_choice == 2 ]] && break
@@ -68,26 +84,55 @@ configure_firewall() {
     done
 
     if [[ $firewall_choice == 2 ]]; then
+        remove_node_iptables_rules
         if ! command -v ufw >/dev/null 2>&1; then
             apt-get update -y
             DEBIAN_FRONTEND=noninteractive apt-get install -y ufw
         fi
         if ! ufw status | grep -q '^Status: active'; then
+            ufw allow 22/tcp || true
             if [[ -n "${SSH_CONNECTION:-}" ]]; then
                 local ssh_port
                 ssh_port=$(awk '{print $4}' <<<"$SSH_CONNECTION")
-                if valid_port "$ssh_port"; then ufw allow "${ssh_port}/tcp" comment 'Preserve current SSH access'; fi
+                if valid_port "$ssh_port"; then ufw allow "${ssh_port}/tcp"; fi
             fi
             ufw --force enable
         fi
-        ufw insert 1 allow from "$PANEL_IP" to any port "$NODE_PORT" proto tcp comment 'Remnawave Panel only'
-        ufw insert 2 deny "$NODE_PORT/tcp" comment 'Block other Remnawave Node clients'
+        if [[ -n $PANEL_IP ]]; then
+            ufw insert 1 allow from "$PANEL_IP" to any port "$NODE_PORT" proto tcp
+            ufw insert 2 deny "$NODE_PORT/tcp"
+            log "UFW разрешает TCP/$NODE_PORT только с $PANEL_IP."
+        else
+            ufw insert 1 allow "$NODE_PORT/tcp"
+            log "IP не указан: UFW открывает TCP/$NODE_PORT для всех адресов."
+        fi
         ufw reload
-        log "UFW ограничивает TCP/$NODE_PORT адресом $PANEL_IP."
         return 0
     fi
 
-    if [[ $PANEL_IP == *:* ]]; then v6_allow="-s $PANEL_IP"; else v4_allow="-s $PANEL_IP"; fi
+    if [[ -n $PANEL_IP ]]; then
+        remove_node_iptables_rules
+        if command -v ufw >/dev/null 2>&1 && ufw status | grep -q '^Status: active'; then
+            ufw --force disable
+        fi
+        if [[ $PANEL_IP == *:* ]]; then
+            v4_rules="iptables -A REMNANODE_NODE -p tcp --dport $NODE_PORT -j DROP"
+            v6_rules="ip6tables -A REMNANODE_NODE -s $PANEL_IP -p tcp --dport $NODE_PORT -j ACCEPT
+ip6tables -A REMNANODE_NODE -p tcp --dport $NODE_PORT -j DROP"
+        else
+            v4_rules="iptables -A REMNANODE_NODE -s $PANEL_IP -p tcp --dport $NODE_PORT -j ACCEPT
+iptables -A REMNANODE_NODE -p tcp --dport $NODE_PORT -j DROP"
+            v6_rules="ip6tables -A REMNANODE_NODE -p tcp --dport $NODE_PORT -j DROP"
+        fi
+    else
+        remove_node_iptables_rules
+        if command -v ufw >/dev/null 2>&1 && ufw status | grep -q '^Status: active'; then
+            ufw --force disable
+        fi
+        log "IP не указан: фильтр порта ноды не устанавливается."
+        return 0
+    fi
+
     command -v iptables >/dev/null 2>&1 || { apt-get update -y; DEBIAN_FRONTEND=noninteractive apt-get install -y iptables; }
     command -v ip6tables >/dev/null 2>&1 || { apt-get update -y; DEBIAN_FRONTEND=noninteractive apt-get install -y iptables; }
 
@@ -98,13 +143,11 @@ configure_firewall() {
 set -e
 iptables -N REMNANODE_NODE 2>/dev/null || true
 iptables -F REMNANODE_NODE
-iptables -A REMNANODE_NODE -p tcp ${v4_allow:+$v4_allow }--dport ${NODE_PORT} -j ACCEPT
-iptables -A REMNANODE_NODE -p tcp --dport ${NODE_PORT} -j DROP
+${v4_rules}
 iptables -C INPUT -j REMNANODE_NODE 2>/dev/null || iptables -I INPUT 1 -j REMNANODE_NODE
 ip6tables -N REMNANODE_NODE 2>/dev/null || true
 ip6tables -F REMNANODE_NODE
-ip6tables -A REMNANODE_NODE -p tcp ${v6_allow:+$v6_allow }--dport ${NODE_PORT} -j ACCEPT
-ip6tables -A REMNANODE_NODE -p tcp --dport ${NODE_PORT} -j DROP
+${v6_rules}
 ip6tables -C INPUT -j REMNANODE_NODE 2>/dev/null || ip6tables -I INPUT 1 -j REMNANODE_NODE
 EOF
     chmod 700 /usr/local/sbin/remnanode-firewall
@@ -126,7 +169,7 @@ EOF
     /usr/local/sbin/remnanode-firewall
     systemctl daemon-reload
     systemctl enable --now remnanode-firewall.service
-    log "iptables/ip6tables ограничивают TCP/$NODE_PORT адресом $PANEL_IP; правила восстанавливаются при загрузке."
+    log "iptables/ip6tables разрешают TCP/$NODE_PORT только с $PANEL_IP; правила восстанавливаются при загрузке."
 }
 
 write_compose() {
@@ -179,8 +222,12 @@ install_node() {
     configure_firewall
     write_compose
     (cd "$INSTALL_DIR" && docker compose config >/dev/null && docker compose pull && docker compose up -d)
-    log "Нода запущена; порт $NODE_PORT доступен только с IP $PANEL_IP по правилам UFW."
-    warn "Проверьте также внешний firewall/панель управления VPS: разрешите TCP/$NODE_PORT только с $PANEL_IP."
+    log "Нода запущена."
+    if [[ -n $PANEL_IP ]]; then
+        warn "Проверьте внешний firewall VPS: TCP/$NODE_PORT должен быть разрешён с $PANEL_IP."
+    else
+        warn "IP не ограничен: TCP/$NODE_PORT открыт для любых адресов согласно выбранному режиму firewall."
+    fi
     echo "Статус: cd $INSTALL_DIR && docker compose ps"
     echo "Логи:   cd $INSTALL_DIR && docker compose logs -f -t"
 }
@@ -210,16 +257,9 @@ install_selfsteel() {
 EOF
     printf 'ok\n' > "$WEB_ROOT/selfsteel-ok.html"
     chmod 644 "$WEB_ROOT/selfsteel-forbidden.html" "$WEB_ROOT/selfsteel-ok.html"
-    # Keep the public HTTP redirect and the original local SelfSteel listener together.
+    # Keep the original local SelfSteel listener on 127.0.0.1:2443.
     if [[ $template == 1 ]]; then
         cat > "$site_available" <<EOF
-server {
-    listen 80;
-    listen [::]:80;
-    server_name ${domain};
-    return 301 https://${domain}\$request_uri;
-}
-
 server {
     listen 127.0.0.1:2443 ssl http2 proxy_protocol default_server;
     server_name ${domain};
@@ -252,23 +292,26 @@ EOF
     else
         cat > "$site_available" <<EOF
 server {
-    listen 80;
-    listen [::]:80;
-    server_name ${domain};
-    return 301 https://${domain}\$request_uri;
-}
-
-server {
     listen 127.0.0.1:2443 ssl http2 proxy_protocol default_server;
     server_name ${domain};
-    root ${WEB_ROOT}; index selfsteel-ok.html; server_tokens off;
-    ssl_certificate "${cert_dir}/fullchain.pem";
-    ssl_certificate_key "${cert_dir}/privkey.pem";
+    root ${WEB_ROOT};
+    index selfsteel-ok.html;
+
+    server_tokens off;
+
+    ssl_certificate "/etc/letsencrypt/live/${domain}/fullchain.pem";
+    ssl_certificate_key "/etc/letsencrypt/live/${domain}/privkey.pem";
+
     ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_session_cache shared:SSL:10m; ssl_session_timeout 1d;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+
     add_header X-Content-Type-Options nosniff always;
     add_header X-Frame-Options SAMEORIGIN always;
-    location / { try_files \$uri /selfsteel-ok.html; }
+
+    location / {
+        try_files \$uri /selfsteel-ok.html;
+    }
 }
 EOF
     fi
@@ -354,11 +397,7 @@ main() {
             4) enable_bbr;;
         esac
         echo
-        read -r -n 1 -s -p "Нажмите пробел, чтобы вернуться в меню . . ." key
-        echo
-        while [[ $key != ' ' ]]; do
-            read -r -n 1 -s key
-        done
+        read -r -p "Нажмите Enter, чтобы вернуться в меню . . ." key
     done
 }
 
