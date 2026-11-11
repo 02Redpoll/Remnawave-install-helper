@@ -210,35 +210,54 @@ install_selfsteel() {
 EOF
     printf 'ok\n' > "$WEB_ROOT/selfsteel-ok.html"
     chmod 644 "$WEB_ROOT/selfsteel-forbidden.html" "$WEB_ROOT/selfsteel-ok.html"
-    # Plain HTTP is redirected by the browser to the public HTTPS endpoint for this domain.
-    cat > "/etc/nginx/sites-available/${SITE_NAME}-http-redirect" <<EOF
+    # Keep the public HTTP redirect and the original local SelfSteel listener together.
+    if [[ $template == 1 ]]; then
+        cat > "$site_available" <<EOF
 server {
     listen 80;
     listen [::]:80;
     server_name ${domain};
     return 301 https://${domain}\$request_uri;
 }
-EOF
-    ln -sfn "/etc/nginx/sites-available/${SITE_NAME}-http-redirect" "/etc/nginx/sites-enabled/${SITE_NAME}-http-redirect"
-    if [[ $template == 1 ]]; then
-        cat > "$site_available" <<EOF
+
 server {
     listen 127.0.0.1:2443 ssl http2 proxy_protocol default_server;
     server_name ${domain};
-    root ${WEB_ROOT}; index index.html; server_tokens off;
-    ssl_certificate "${cert_dir}/fullchain.pem";
-    ssl_certificate_key "${cert_dir}/privkey.pem";
+    root ${WEB_ROOT};
+    index index.html;
+
+    server_tokens off;
+
+    ssl_certificate "/etc/letsencrypt/live/${domain}/fullchain.pem";
+    ssl_certificate_key "/etc/letsencrypt/live/${domain}/privkey.pem";
+
     ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_session_cache shared:SSL:10m; ssl_session_timeout 1d;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+
     add_header X-Content-Type-Options nosniff always;
     add_header X-Frame-Options SAMEORIGIN always;
+
     error_page 403 /selfsteel-forbidden.html;
-    location = /selfsteel-forbidden.html { internal; }
-    location / { return 403; }
+
+    location = /selfsteel-forbidden.html {
+        internal;
+    }
+
+    location / {
+        return 403;
+    }
 }
 EOF
     else
         cat > "$site_available" <<EOF
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${domain};
+    return 301 https://${domain}\$request_uri;
+}
+
 server {
     listen 127.0.0.1:2443 ssl http2 proxy_protocol default_server;
     server_name ${domain};
