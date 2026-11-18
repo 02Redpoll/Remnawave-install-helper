@@ -264,45 +264,6 @@ server {
     return 301 https://${domain}\$request_uri;
 }
 
-update_selfsteel() {
-    local site="/etc/nginx/sites-available/$SITE_NAME" domain backup temp
-    [[ -f $site ]] || { warn "Конфиг $site не найден. Сначала установите SelfSteel."; return; }
-    domain=$(awk '/^[[:space:]]*server_name[[:space:]]/ {gsub(/;/,"",$2); print $2; exit}' "$site")
-    [[ $domain =~ ^[a-zA-Z0-9.-]+$ && $domain != .* && $domain != *..* ]] || { warn "Не удалось определить домен из конфига."; return; }
-    if grep -Eq '^[[:space:]]*listen[[:space:]]+(\[::\]:|0\.0\.0\.0:)?80([[:space:];]|$)' "$site"; then
-        log "В конфиге уже есть listener на порту 80; конфиг оставлен без изменений."
-        return
-    fi
-    grep -Eq '^[[:space:]]*listen[[:space:]]+127\.0\.0\.1:2443([[:space:];]|$)' "$site" || { warn "Не найден listener SelfSteel на 127.0.0.1:2443."; return; }
-    backup="${site}.backup.$(date +%Y%m%d-%H%M%S)"
-    cp -p "$site" "$backup"
-    temp=$(mktemp "${site}.XXXXXX")
-    cat > "$temp" <<EOF
-server {
-    listen 80;
-    listen [::]:80;
-    server_name ${domain};
-
-    return 301 https://${domain}\$request_uri;
-}
-
-EOF
-    cat "$site" >> "$temp"
-    chmod --reference="$site" "$temp"
-    chown --reference="$site" "$temp"
-    mv -f "$temp" "$site"
-    if ! nginx -t; then
-        cp -p "$backup" "$site"
-        warn "Проверка Nginx не прошла; восстановлена резервная копия $backup."
-        return
-    fi
-    if ! systemctl reload nginx; then
-        cp -p "$backup" "$site"
-        warn "Не удалось перезагрузить Nginx; конфиг восстановлен из $backup."
-        return
-    fi
-    log "SelfSteel обновлён: HTTP перенаправляется на https://$domain. Резервная копия: $backup"
-}
 
 server {
     listen 127.0.0.1:2443 ssl http2 proxy_protocol default_server;
@@ -375,6 +336,47 @@ EOF
     log "SelfSteel настроен: $domain, HTTP :80 → HTTPS :443, локальный listen 127.0.0.1:2443."
     warn "Конфигурация ожидает reverse proxy, который передаёт PROXY protocol. Для прямого доступа nginx на 2443 не предназначен."
 }
+
+update_selfsteel() {
+    local site="/etc/nginx/sites-available/$SITE_NAME" domain backup temp
+    [[ -f $site ]] || { warn "Конфиг $site не найден. Сначала установите SelfSteel."; return; }
+    domain=$(awk '/^[[:space:]]*server_name[[:space:]]/ {gsub(/;/,"",$2); print $2; exit}' "$site")
+    [[ $domain =~ ^[a-zA-Z0-9.-]+$ && $domain != .* && $domain != *..* ]] || { warn "Не удалось определить домен из конфига."; return; }
+    if grep -Eq '^[[:space:]]*listen[[:space:]]+(\[::\]:|0\.0\.0\.0:)?80([[:space:];]|$)' "$site"; then
+        log "В конфиге уже есть listener на порту 80; конфиг оставлен без изменений."
+        return
+    fi
+    grep -Eq '^[[:space:]]*listen[[:space:]]+127\.0\.0\.1:2443([[:space:];]|$)' "$site" || { warn "Не найден listener SelfSteel на 127.0.0.1:2443."; return; }
+    backup="${site}.backup.$(date +%Y%m%d-%H%M%S)"
+    cp -p "$site" "$backup"
+    temp=$(mktemp "${site}.XXXXXX")
+    cat > "$temp" <<EOF
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${domain};
+
+    return 301 https://${domain}\$request_uri;
+}
+
+EOF
+    cat "$site" >> "$temp"
+    chmod --reference="$site" "$temp"
+    chown --reference="$site" "$temp"
+    mv -f "$temp" "$site"
+    if ! nginx -t; then
+        cp -p "$backup" "$site"
+        warn "Проверка Nginx не прошла; восстановлена резервная копия $backup."
+        return
+    fi
+    if ! systemctl reload nginx; then
+        cp -p "$backup" "$site"
+        warn "Не удалось перезагрузить Nginx; конфиг восстановлен из $backup."
+        return
+    fi
+    log "SelfSteel обновлён: HTTP перенаправляется на https://$domain. Резервная копия: $backup"
+}
+
 
 enable_bbr() {
     local congestion available
