@@ -264,6 +264,46 @@ server {
     return 301 https://${domain}\$request_uri;
 }
 
+update_selfsteel() {
+    local site="/etc/nginx/sites-available/$SITE_NAME" domain backup temp
+    [[ -f $site ]] || { warn "Конфиг $site не найден. Сначала установите SelfSteel."; return; }
+    domain=$(awk '/^[[:space:]]*server_name[[:space:]]/ {gsub(/;/,"",$2); print $2; exit}' "$site")
+    [[ $domain =~ ^[a-zA-Z0-9.-]+$ && $domain != .* && $domain != *..* ]] || { warn "Не удалось определить домен из конфига."; return; }
+    if grep -Eq '^[[:space:]]*listen[[:space:]]+(\[::\]:|0\.0\.0\.0:)?80([[:space:];]|$)' "$site"; then
+        log "В конфиге уже есть listener на порту 80; конфиг оставлен без изменений."
+        return
+    fi
+    grep -Eq '^[[:space:]]*listen[[:space:]]+127\.0\.0\.1:2443([[:space:];]|$)' "$site" || { warn "Не найден listener SelfSteel на 127.0.0.1:2443."; return; }
+    backup="${site}.backup.$(date +%Y%m%d-%H%M%S)"
+    cp -p "$site" "$backup"
+    temp=$(mktemp "${site}.XXXXXX")
+    cat > "$temp" <<EOF
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${domain};
+
+    return 301 https://${domain}\$request_uri;
+}
+
+EOF
+    cat "$site" >> "$temp"
+    chmod --reference="$site" "$temp"
+    chown --reference="$site" "$temp"
+    mv -f "$temp" "$site"
+    if ! nginx -t; then
+        cp -p "$backup" "$site"
+        warn "Проверка Nginx не прошла; восстановлена резервная копия $backup."
+        return
+    fi
+    if ! systemctl reload nginx; then
+        cp -p "$backup" "$site"
+        warn "Не удалось перезагрузить Nginx; конфиг восстановлен из $backup."
+        return
+    fi
+    log "SelfSteel обновлён: HTTP перенаправляется на https://$domain. Резервная копия: $backup"
+}
+
 server {
     listen 127.0.0.1:2443 ssl http2 proxy_protocol default_server;
     server_name ${domain};
@@ -553,20 +593,22 @@ main() {
         echo "========================================="
         echo "1) Установить Remnawave Node"
         echo "2) Установить SelfSteel"
-        echo "3) Установить оба компонента"
-        echo "4) Утилиты"
+        echo "3) Обновить SelfSteel"
+        echo "4) Установить оба компонента"
+        echo "5) Утилиты"
         echo "0) Выход"
         while :; do
-            read -r -p "Выберите пункт 0-4: " choice
-            [[ $choice == 0 || $choice == 1 || $choice == 2 || $choice == 3 || $choice == 4 ]] && break
-            warn "Выберите пункт 0-4."
+            read -r -p "Выберите пункт 0-5: " choice
+            [[ $choice == 0 || $choice == 1 || $choice == 2 || $choice == 3 || $choice == 4 || $choice == 5 ]] && break
+            warn "Выберите пункт 0-5."
         done
         [[ $choice == 0 ]] && break
         case "$choice" in
             1) install_node;;
             2) install_selfsteel;;
-            3) install_node; install_selfsteel;;
-            4) utilities_menu;;
+            3) update_selfsteel;;
+            4) install_node; install_selfsteel;;
+            5) utilities_menu;;
         esac
         echo
         read -r -p "Нажмите Enter, чтобы вернуться в меню . . ." key
