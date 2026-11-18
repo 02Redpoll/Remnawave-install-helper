@@ -259,9 +259,17 @@ install_selfsteel() {
 EOF
     printf 'ok\n' > "$WEB_ROOT/selfsteel-ok.html"
     chmod 644 "$WEB_ROOT/selfsteel-forbidden.html" "$WEB_ROOT/selfsteel-ok.html"
-    # Keep the original local SelfSteel listener on 127.0.0.1:2443.
+    # HTTP redirect and the local SelfSteel listener share one site configuration.
     if [[ $template == 1 ]]; then
         cat > "$site_available" <<EOF
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${domain};
+
+    return 301 https://${domain}\$request_uri;
+}
+
 server {
     listen 127.0.0.1:2443 ssl http2 proxy_protocol default_server;
     server_name ${domain};
@@ -294,6 +302,14 @@ EOF
     else
         cat > "$site_available" <<EOF
 server {
+    listen 80;
+    listen [::]:80;
+    server_name ${domain};
+
+    return 301 https://${domain}\$request_uri;
+}
+
+server {
     listen 127.0.0.1:2443 ssl http2 proxy_protocol default_server;
     server_name ${domain};
     root ${WEB_ROOT};
@@ -322,7 +338,7 @@ EOF
     nginx -t
     systemctl enable nginx
     systemctl restart nginx
-    log "SelfSteel настроен: $domain, TLS-сертификат $cert_dir, локальный listen 127.0.0.1:2443."
+    log "SelfSteel настроен: $domain, HTTP :80 → HTTPS :443, локальный listen 127.0.0.1:2443."
     warn "Конфигурация ожидает reverse proxy, который передаёт PROXY protocol. Для прямого доступа nginx на 2443 не предназначен."
 }
 
