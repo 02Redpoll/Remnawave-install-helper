@@ -337,6 +337,134 @@ EOF
     warn "Конфигурация ожидает reverse proxy, который передаёт PROXY protocol. Для прямого доступа nginx на 2443 не предназначен."
 }
 
+install_selfsteel_nginx() {
+    local domain email path template cert_dir site site_enabled tmp backup had_site=0 nginx_was_active=0
+    site="/etc/nginx/sites-available/$SITE_NAME"
+    site_enabled="/etc/nginx/sites-enabled/$SITE_NAME"
+    read -r -p "Домен SelfSteel: " domain
+    [[ $domain =~ ^[a-zA-Z0-9.-]+$ && $domain != .* && $domain != *..* ]] || { warn "Некорректный домен."; return; }
+    read -r -p "Путь XHTTP [/xhttp]: " path
+    path=${path:-/xhttp}
+    [[ $path =~ ^/[a-zA-Z0-9_-]+(/[a-zA-Z0-9_-]+)*$ ]] || { warn "Путь должен состоять из букв, цифр, /, _ и - без завершающего /."; return; }
+    read -r -p "Заглушка: 1) Forbidden  2) OK: " template
+    [[ $template == 1 || $template == 2 ]] || { warn "Выберите 1 или 2."; return; }
+    read -r -p "Email для Certbot: " email
+    [[ $email == *@*.* ]] || { warn "Укажите email."; return; }
+    apt-get update -y
+    DEBIAN_FRONTEND=noninteractive apt-get install -y nginx-extras certbot
+    cert_dir="/etc/letsencrypt/live/$domain"
+    if [[ ! -s $cert_dir/fullchain.pem || ! -s $cert_dir/privkey.pem ]]; then
+        if systemctl is-active --quiet nginx; then nginx_was_active=1; systemctl stop nginx; fi
+        if ss -ltnH 'sport = :80' | grep -q .; then
+            (( nginx_was_active == 0 )) || systemctl start nginx
+            warn "Порт 80 занят; освободите его для Certbot."
+            return
+        fi
+        if ! certbot certonly --standalone -d "$domain" --non-interactive --agree-tos -m "$email" --keep-until-expiring; then
+            (( nginx_was_active == 0 )) || systemctl start nginx
+            warn "Не удалось получить сертификат."
+            return
+        fi
+    fi
+    if ss -ltnpH 'sport = :443' | grep -v 'nginx' | grep -q .; then
+        (( nginx_was_active == 0 )) || systemctl start nginx
+        warn "Порт 443 занят другим процессом. Перенастройте Xray на Unix-сокет перед установкой."
+        return
+    fi
+    mkdir -p "$WEB_ROOT"
+    printf 'ok\n' > "$WEB_ROOT/selfsteel-ok.html"
+    cat > "$WEB_ROOT/selfsteel-forbidden.html" <<EOF
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>403 Forbidden</title></head><body><h1>Forbidden</h1><p>You don't have permission to access this resource.</p><hr><address>Apache/2.4.58 (Ubuntu) Server at ${domain} Port 443</address></body></html>
+EOF
+    tmp=$(mktemp "${site}.XXXXXX")
+    cat > "$tmp" <<EOF
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${domain};
+    return 301 https://${domain}\$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name ${domain};
+    root ${WEB_ROOT};
+    server_tokens off;
+    ssl_certificate "${cert_dir}/fullchain.pem";
+    ssl_certificate_key "${cert_dir}/privkey.pem";
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    location = ${path} {
+        proxy_pass http://unix:/dev/shm/redwave-xhttp.sock:;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_read_timeout 1h;
+    }
+    location ^~ ${path}/ {
+        proxy_pass http://unix:/dev/shm/redwave-xhttp.sock:;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_read_timeout 1h;
+    }
+EOF
+    if [[ $template == 1 ]]; then
+        cat >> "$tmp" <<'EOF'
+    error_page 403 /selfsteel-forbidden.html;
+    location = /selfsteel-forbidden.html { internal; }
+    location / { return 403; }
+}
+EOF
+    else
+        cat >> "$tmp" <<'EOF'
+    location / { try_files $uri /selfsteel-ok.html; }
+}
+EOF
+    fi
+    backup="${site}.backup.$(date +%Y%m%d-%H%M%S)"
+    if [[ -f $site ]]; then cp -p "$site" "$backup"; had_site=1; fi
+    chmod 644 "$tmp"
+    mv -f "$tmp" "$site"
+    ln -sfn "$site" "$site_enabled"
+    if ! nginx -t; then
+        if ((had_site)); then cp -p "$backup" "$site"; else rm -f "$site_enabled" "$site"; fi
+        (( nginx_was_active == 0 )) || systemctl start nginx
+        warn "Конфиг Nginx не прошёл проверку; изменения сайта отменены."
+        return
+    fi
+    systemctl enable nginx
+    if ! systemctl restart nginx; then
+        if ((had_site)); then cp -p "$backup" "$site"; else rm -f "$site_enabled" "$site"; fi
+        (( nginx_was_active == 0 )) || systemctl start nginx
+        warn "Nginx не запустился; конфиг сайта восстановлен."
+        return
+    fi
+    log "Nginx на 443, XHTTP: $path, сокет: /dev/shm/redwave-xhttp.sock."
+    echo "В Config Profile панели настройте inbound VLESS: listen /dev/shm/redwave-xhttp.sock,0666; network xhttp; security none; path $path."
+    echo "Ноде и Nginx нужен общий /dev/shm. В клиентском Host укажите TLS и тот же XHTTP path."
+    warn "Профиль панели не изменён автоматически. Перенесите вход с 443 на сокет и проверьте права доступа к нему."
+}
+
+selfsteel_menu() {
+    local selection
+    echo "1) SelfSteel (Xray:443)"
+    echo "2) SelfSteel (Nginx:443, XHTTP через Unix-сокет)"
+    echo "0) Назад"
+    read -r -p "Выбор: " selection
+    case "$selection" in
+        1) install_selfsteel ;;
+        2) install_selfsteel_nginx ;;
+        0) return ;;
+        *) warn "Неизвестный пункт." ;;
+    esac
+}
+
 update_selfsteel() {
     local site="/etc/nginx/sites-available/$SITE_NAME" domain backup temp
     [[ -f $site ]] || { warn "Конфиг $site не найден. Сначала установите SelfSteel."; return; }
@@ -607,9 +735,9 @@ main() {
         [[ $choice == 0 ]] && break
         case "$choice" in
             1) install_node;;
-            2) install_selfsteel;;
+            2) selfsteel_menu;;
             3) update_selfsteel;;
-            4) install_node; install_selfsteel;;
+            4) install_node; selfsteel_menu;;
             5) utilities_menu;;
         esac
         echo
