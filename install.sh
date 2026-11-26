@@ -228,6 +228,50 @@ install_node() {
     echo "Логи:   cd $INSTALL_DIR && docker compose logs -f -t"
 }
 
+choose_selfsteel_template() {
+    local choice
+    echo "Выберите страницу SelfSteel:"
+    echo "1) Forbidden (403)       2) OK"
+    echo "3) API Gateway           4) API Service"
+    echo "5) API Documentation    6) Service status"
+    echo "7) Сайт компании         8) Личная страница"
+    echo "9) Страница продукта    10) Технические работы"
+    while :; do
+        read -r -p "Выберите 1-10: " choice
+        case "$choice" in 1|2|3|4|5|6|7|8|9|10) break;; *) warn "Введите число от 1 до 10.";; esac
+    done
+    template=$choice
+    SELFSTEEL_PAGE="selfsteel-page-${choice}.html"
+}
+
+write_selfsteel_pages() {
+    local domain="$1" dir="$WEB_ROOT" title subtitle body
+    mkdir -p "$dir"
+    cat > "$dir/selfsteel-forbidden.html" <<EOF
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>403 Forbidden</title></head><body><h1>Forbidden</h1><p>You don't have permission to access this resource.</p><hr><address>Apache/2.4.58 (Ubuntu) Server at ${domain} Port 443</address></body></html>
+EOF
+    printf 'ok\n' > "$dir/selfsteel-ok.html"
+    chmod 644 "$dir/selfsteel-forbidden.html" "$dir/selfsteel-ok.html"
+    case "$template" in
+        1|2) return ;;
+        3) title='API Gateway'; subtitle='Service endpoint'; body='This endpoint accepts requests from authorized applications.' ;;
+        4) title='API Service'; subtitle='Application interface'; body='This service provides an interface for connected applications.' ;;
+        5) title='API Documentation'; subtitle='Developer resources'; body='Documentation for this service is available to authorized users.' ;;
+        6) title='Service Status'; subtitle='Status overview'; body='For service information, please contact the administrator.' ;;
+        7) title='Welcome'; subtitle='A simple place for ideas'; body='We create useful digital experiences for people and businesses.' ;;
+        8) title='Hello there'; subtitle='A personal space on the web'; body='This website is a place to share ideas, projects and updates.' ;;
+        9) title='Built for your next idea'; subtitle='Simple tools for everyday work'; body='A focused digital workspace for projects, notes and collaboration.' ;;
+        10) title='We will be back soon'; subtitle='Scheduled maintenance'; body='This website is being updated. Please check back later.' ;;
+    esac
+    cat > "$dir/$SELFSTEEL_PAGE" <<EOF
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title}</title>
+<style>body{margin:0;background:#f5f7fb;color:#17243a;font:16px system-ui,sans-serif}main{max-width:720px;margin:12vh auto;padding:36px}small{letter-spacing:.1em;color:#426695;text-transform:uppercase}h1{font-size:clamp(2rem,6vw,3.5rem);margin:.6em 0 .3em}p{line-height:1.7;color:#52647b}footer{margin-top:4rem;color:#8190a3;font-size:.85rem}</style></head>
+<body><main><small>${subtitle}</small><h1>${title}</h1><p>${body}</p><footer>${domain}</footer></main></body></html>
+EOF
+    chmod 644 "$dir/$SELFSTEEL_PAGE"
+}
+
 install_selfsteel() {
     local domain email template cert_dir site_available site_enabled
     site_available="/etc/nginx/sites-available/$SITE_NAME"
@@ -236,8 +280,7 @@ install_selfsteel() {
     [[ $domain =~ ^[a-zA-Z0-9.-]+$ && $domain != .* && $domain != *..* ]] || die "Некорректный домен."
     read -r -p "Email для Certbot: " email
     [[ $email == *@*.* ]] || die "Укажите корректный email."
-    echo "Шаблон: 1) Forbidden (403)  2) OK"
-    while :; do read -r -p "Введите 1 или 2: " template; [[ $template == 1 || $template == 2 ]] && break; warn "Укажите 1 или 2."; done
+    choose_selfsteel_template
 
     while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || fuser /var/lib/dpkg/lock >/dev/null 2>&1; do warn "apt/dpkg занят, жду..."; sleep 5; done
     apt-get update -y
@@ -247,11 +290,7 @@ install_selfsteel() {
     certbot certonly --standalone -d "$domain" --non-interactive --agree-tos -m "$email" --keep-until-expiring
     cert_dir="/etc/letsencrypt/live/$domain"
     [[ -f $cert_dir/fullchain.pem && -f $cert_dir/privkey.pem ]] || die "Сертификат не найден."
-    mkdir -p "$WEB_ROOT"
-    cat > "$WEB_ROOT/selfsteel-forbidden.html" <<EOF
-<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>403 Forbidden</title></head><body><h1>Forbidden</h1><p>You don't have permission to access this resource.</p><hr><address>Apache/2.4.58 (Ubuntu) Server at ${domain} Port 443</address></body></html>
-EOF
-    printf 'ok\n' > "$WEB_ROOT/selfsteel-ok.html"
+    write_selfsteel_pages "$domain"
     chmod 644 "$WEB_ROOT/selfsteel-forbidden.html" "$WEB_ROOT/selfsteel-ok.html"
     # HTTP redirect and the local SelfSteel listener share one site configuration.
     if [[ $template == 1 ]]; then
@@ -295,6 +334,12 @@ server {
 }
 EOF
     else
+        if [[ $template == 2 ]]; then
+            SELFSTEEL_PAGE="selfsteel-ok.html"
+            SELFSTEEL_TRY='try_files $uri /selfsteel-ok.html;'
+        else
+            SELFSTEEL_TRY="try_files /${SELFSTEEL_PAGE} =404;"
+        fi
         cat > "$site_available" <<EOF
 server {
     listen 80;
@@ -308,7 +353,7 @@ server {
     listen 127.0.0.1:2443 ssl http2 proxy_protocol default_server;
     server_name ${domain};
     root ${WEB_ROOT};
-    index selfsteel-ok.html;
+    index ${SELFSTEEL_PAGE};
 
     server_tokens off;
 
@@ -323,7 +368,7 @@ server {
     add_header X-Frame-Options SAMEORIGIN always;
 
     location / {
-        try_files \$uri /selfsteel-ok.html;
+        ${SELFSTEEL_TRY}
     }
 }
 EOF
@@ -346,8 +391,7 @@ install_selfsteel_nginx() {
     read -r -p "Путь XHTTP [/xhttp]: " path
     path=${path:-/xhttp}
     [[ $path =~ ^/[a-zA-Z0-9_-]+(/[a-zA-Z0-9_-]+)*$ ]] || { warn "Путь должен состоять из букв, цифр, /, _ и - без завершающего /."; return; }
-    read -r -p "Заглушка: 1) Forbidden  2) OK: " template
-    [[ $template == 1 || $template == 2 ]] || { warn "Выберите 1 или 2."; return; }
+    choose_selfsteel_template
     read -r -p "Email для Certbot: " email
     [[ $email == *@*.* ]] || { warn "Укажите email."; return; }
     apt-get update -y
@@ -371,11 +415,7 @@ install_selfsteel_nginx() {
         warn "Порт 443 занят другим процессом. Перенастройте Xray на Unix-сокет перед установкой."
         return
     fi
-    mkdir -p "$WEB_ROOT"
-    printf 'ok\n' > "$WEB_ROOT/selfsteel-ok.html"
-    cat > "$WEB_ROOT/selfsteel-forbidden.html" <<EOF
-<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>403 Forbidden</title></head><body><h1>Forbidden</h1><p>You don't have permission to access this resource.</p><hr><address>Apache/2.4.58 (Ubuntu) Server at ${domain} Port 443</address></body></html>
-EOF
+    write_selfsteel_pages "$domain"
     tmp=$(mktemp "${site}.XXXXXX")
     cat > "$tmp" <<EOF
 server {
@@ -422,8 +462,14 @@ EOF
 }
 EOF
     else
-        cat >> "$tmp" <<'EOF'
-    location / { try_files $uri /selfsteel-ok.html; }
+        if [[ $template == 2 ]]; then
+            SELFSTEEL_PAGE="selfsteel-ok.html"
+            SELFSTEEL_TRY='try_files $uri /selfsteel-ok.html;'
+        else
+            SELFSTEEL_TRY="try_files /${SELFSTEEL_PAGE} =404;"
+        fi
+        cat >> "$tmp" <<EOF
+    location / { ${SELFSTEEL_TRY} }
 }
 EOF
     fi
