@@ -291,11 +291,16 @@ EOF
 }
 
 install_selfsteel() {
-    local domain email template cert_dir site_available site_enabled
+    local domain email template cert_dir site_available site_enabled xhttp_path
     site_available="/etc/nginx/sites-available/$SITE_NAME"
     site_enabled="/etc/nginx/sites-enabled/$SITE_NAME"
     read -r -p "Домен SelfSteel: " domain
     [[ $domain =~ ^[a-zA-Z0-9.-]+$ && $domain != .* && $domain != *..* ]] || die "Некорректный домен."
+    read -r -p "Путь XHTTP (необязательно, Enter — оставить по умолчанию): " xhttp_path
+    if [[ -n $xhttp_path && ! $xhttp_path =~ ^/[a-zA-Z0-9_-]+(/[a-zA-Z0-9_-]+)*/?$ ]]; then
+        warn "Путь должен начинаться с / и содержать буквы, цифры, /, _ или -."
+        return
+    fi
     read -r -p "Email для Certbot: " email
     [[ $email == *@*.* ]] || die "Укажите корректный email."
     choose_selfsteel_template
@@ -398,6 +403,12 @@ EOF
     systemctl restart nginx
     log "SelfSteel настроен: $domain, HTTP :80 → HTTPS :443, локальный listen 127.0.0.1:2443."
     warn "Конфигурация ожидает reverse proxy, который передаёт PROXY protocol. Для прямого доступа nginx на 2443 не предназначен."
+    if [[ -n $xhttp_path ]]; then
+        echo "Путь XHTTP для профиля Remnawave и Host: $xhttp_path"
+        warn "Укажите этот путь в xhttpSettings.path inbound и в Host: установщик не изменяет профиль панели."
+    else
+        echo "Путь XHTTP не указан. В Xray используется путь по умолчанию /; проверьте настройки Host."
+    fi
 }
 
 install_selfsteel_nginx() {
