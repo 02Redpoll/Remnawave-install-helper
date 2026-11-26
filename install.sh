@@ -236,9 +236,15 @@ choose_selfsteel_template() {
     echo "5) API Documentation    6) Service status"
     echo "7) Сайт компании         8) Личная страница"
     echo "9) Страница продукта    10) Технические работы"
+    echo "11) CDN Edge             12) CDN Static Assets"
+    echo "13) CDN Media            14) CDN Cache"
+    echo "15) Object Storage       16) Cloud Infrastructure"
+    echo "17) Cloud Compute        18) Image Delivery"
+    echo "19) Content Delivery    20) Service Unavailable"
+    echo "21) Resource Not Found  22) Access Restricted"
     while :; do
-        read -r -p "Выберите 1-10: " choice
-        case "$choice" in 1|2|3|4|5|6|7|8|9|10) break;; *) warn "Введите число от 1 до 10.";; esac
+        read -r -p "Выберите 1-22: " choice
+        case "$choice" in 1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22) break;; *) warn "Введите число от 1 до 22.";; esac
     done
     template=$choice
     SELFSTEEL_PAGE="selfsteel-page-${choice}.html"
@@ -262,6 +268,18 @@ EOF
         8) title='Hello there'; subtitle='A personal space on the web'; body='This website is a place to share ideas, projects and updates.' ;;
         9) title='Built for your next idea'; subtitle='Simple tools for everyday work'; body='A focused digital workspace for projects, notes and collaboration.' ;;
         10) title='We will be back soon'; subtitle='Scheduled maintenance'; body='This website is being updated. Please check back later.' ;;
+        11) title='Edge endpoint'; subtitle='Content delivery'; body='This endpoint is configured to serve content for connected applications.' ;;
+        12) title='Static assets'; subtitle='Content delivery'; body='This endpoint hosts static resources for web applications.' ;;
+        13) title='Media delivery'; subtitle='Content network'; body='Media resources are delivered through this endpoint.' ;;
+        14) title='Cache endpoint'; subtitle='Delivery service'; body='This endpoint is used for content distribution.' ;;
+        15) title='Object storage'; subtitle='Storage endpoint'; body='This endpoint is reserved for storage operations.' ;;
+        16) title='Cloud infrastructure'; subtitle='Infrastructure services'; body='Services and resources are managed through this endpoint.' ;;
+        17) title='Compute service'; subtitle='Cloud infrastructure'; body='This endpoint is reserved for compute service operations.' ;;
+        18) title='Image delivery'; subtitle='Media resources'; body='Image resources for connected applications are served here.' ;;
+        19) title='Content delivery'; subtitle='Delivery endpoint'; body='This endpoint is available for content distribution.' ;;
+        20) title='Service unavailable'; subtitle='Service status'; body='The requested service is temporarily unavailable.' ;;
+        21) title='Resource not found'; subtitle='Content delivery'; body='The requested resource could not be found.' ;;
+        22) title='Access restricted'; subtitle='Delivery endpoint'; body='Access to this resource is restricted.' ;;
     esac
     cat > "$dir/$SELFSTEEL_PAGE" <<EOF
 <!doctype html>
